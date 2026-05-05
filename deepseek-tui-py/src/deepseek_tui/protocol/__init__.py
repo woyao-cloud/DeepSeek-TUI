@@ -5,6 +5,8 @@ Port of the `deepseek-protocol` crate.
 
 from .types import (
     # Enums
+    truncate_preview,
+    # Enums
     ThreadStatus,
     SessionSource,
     ToolKind,
@@ -39,6 +41,7 @@ from .types import (
 )
 
 __all__ = [
+    "truncate_preview",
     "ThreadStatus",
     "SessionSource",
     "ToolKind",
