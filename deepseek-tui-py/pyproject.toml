@@ -1,0 +1,56 @@
+[project]
+name = "deepseek-tui"
+version = "0.1.0"
+description = "DeepSeek TUI/CLI for DeepSeek models (Python port)"
+requires-python = ">=3.12"
+authors = [
+    { name = "Hmbown", email = "hmbown@users.noreply.github.com" },
+]
+
+dependencies = [
+    "httpx>=0.28,<1",
+    "httpx-sse>=0.4,<1",
+    "pydantic>=2.10,<3",
+    "pydantic-settings>=2.7,<3",
+    "aiosqlite>=0.21,<1",
+    "pyyaml>=6.0,<7",
+    "tomli>=2.2,<3; python_version < '3.11'",
+    "rich>=13.9,<14",
+    "typing-extensions>=4.12,<5",
+]
+
+[project.optional-dependencies]
+tui = [
+    "textual>=3.1,<4",
+]
+server = [
+    "fastapi>=0.115,<1",
+    "uvicorn>=0.34,<1",
+    "sse-starlette>=2.1,<1",
+]
+mcp = [
+    "mcp>=1.3,<2",
+]
+all = [
+    "deepseek-tui[tui,server,mcp]",
+]
+
+[project.scripts]
+deepseek = "deepseek_tui.cli:main"
+
+[build-system]
+requires = ["setuptools>=75.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["deepseek_tui*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"

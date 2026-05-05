@@ -1,0 +1,54 @@
+Defaulting to user installation because normal site-packages is not writeable
+Obtaining file:///D:/python-projects/openherness/DeepSeek-TUI/deepseek-tui-py
+  Installing build dependencies: started
+  Installing build dependencies: still running...
+  Installing build dependencies: finished with status 'done'
+  Checking if build backend supports build_editable: started
+  Checking if build backend supports build_editable: finished with status 'done'
+  Getting requirements to build editable: started
+  Getting requirements to build editable: finished with status 'done'
+  Preparing editable metadata (pyproject.toml): started
+  Preparing editable metadata (pyproject.toml): finished with status 'done'
+Requirement already satisfied: httpx<1,>=0.28 in c:\users\laido\appdata\roaming\python\python312\site-packages (from deepseek-tui==0.1.0) (0.28.1)
+Requirement already satisfied: httpx-sse<1,>=0.4 in c:\users\laido\appdata\roaming\python\python312\site-packages (from deepseek-tui==0.1.0) (0.4.3)
+Requirement already satisfied: pydantic<3,>=2.10 in c:\users\laido\appdata\roaming\python\python312\site-packages (from deepseek-tui==0.1.0) (2.13.0)
+Requirement already satisfied: pydantic-settings<3,>=2.7 in c:\users\laido\appdata\roaming\python\python312\site-packages (from deepseek-tui==0.1.0) (2.13.1)
+Requirement already satisfied: aiosqlite<1,>=0.21 in c:\users\laido\appdata\roaming\python\python312\site-packages (from deepseek-tui==0.1.0) (0.22.1)
+Requirement already satisfied: pyyaml<7,>=6.0 in c:\users\laido\appdata\roaming\python\python312\site-packages (from deepseek-tui==0.1.0) (6.0.3)
+Collecting rich<14,>=13.9 (from deepseek-tui==0.1.0)
+  Downloading rich-13.9.4-py3-none-any.whl.metadata (18 kB)
+Requirement already satisfied: typing-extensions<5,>=4.12 in c:\users\laido\appdata\roaming\python\python312\site-packages (from deepseek-tui==0.1.0) (4.15.0)
+Requirement already satisfied: anyio in c:\users\laido\appdata\roaming\python\python312\site-packages (from httpx<1,>=0.28->deepseek-tui==0.1.0) (4.13.0)
+Requirement already satisfied: certifi in c:\users\laido\appdata\roaming\python\python312\site-packages (from httpx<1,>=0.28->deepseek-tui==0.1.0) (2026.2.25)
+Requirement already satisfied: httpcore==1.* in c:\users\laido\appdata\roaming\python\python312\site-packages (from httpx<1,>=0.28->deepseek-tui==0.1.0) (1.0.9)
+Requirement already satisfied: idna in c:\users\laido\appdata\roaming\python\python312\site-packages (from httpx<1,>=0.28->deepseek-tui==0.1.0) (3.11)
+Requirement already satisfied: h11>=0.16 in c:\users\laido\appdata\roaming\python\python312\site-packages (from httpcore==1.*->httpx<1,>=0.28->deepseek-tui==0.1.0) (0.16.0)
+Requirement already satisfied: annotated-types>=0.6.0 in c:\users\laido\appdata\roaming\python\python312\site-packages (from pydantic<3,>=2.10->deepseek-tui==0.1.0) (0.7.0)
+Requirement already satisfied: pydantic-core==2.46.0 in c:\users\laido\appdata\roaming\python\python312\site-packages (from pydantic<3,>=2.10->deepseek-tui==0.1.0) (2.46.0)
+Requirement already satisfied: typing-inspection>=0.4.2 in c:\users\laido\appdata\roaming\python\python312\site-packages (from pydantic<3,>=2.10->deepseek-tui==0.1.0) (0.4.2)
+Requirement already satisfied: python-dotenv>=0.21.0 in c:\users\laido\appdata\roaming\python\python312\site-packages (from pydantic-settings<3,>=2.7->deepseek-tui==0.1.0) (1.2.2)
+Requirement already satisfied: markdown-it-py>=2.2.0 in c:\users\laido\appdata\roaming\python\python312\site-packages (from rich<14,>=13.9->deepseek-tui==0.1.0) (4.0.0)
+Requirement already satisfied: pygments<3.0.0,>=2.13.0 in c:\users\laido\appdata\roaming\python\python312\site-packages (from rich<14,>=13.9->deepseek-tui==0.1.0) (2.20.0)
+Requirement already satisfied: mdurl~=0.1 in c:\users\laido\appdata\roaming\python\python312\site-packages (from markdown-it-py>=2.2.0->rich<14,>=13.9->deepseek-tui==0.1.0) (0.1.2)
+Downloading rich-13.9.4-py3-none-any.whl (242 kB)
+Building wheels for collected packages: deepseek-tui
+  Building editable for deepseek-tui (pyproject.toml): started
+  Building editable for deepseek-tui (pyproject.toml): finished with status 'done'
+  Created wheel for deepseek-tui: filename=deepseek_tui-0.1.0-0.editable-py3-none-any.whl size=1879 sha256=a89378758a7d2edffb633d61e06dbfe88075e376d800b951b5461f0c7a37fcc4
+  Stored in directory: C:\Users\laido\AppData\Local\Temp\pip-ephem-wheel-cache-qy_igmcm\wheels\42\f4\49\190de5367cc92d04560f82323a361f7e572f9a12b9093b558c
+Successfully built deepseek-tui
+Installing collected packages: rich, deepseek-tui
+  Attempting uninstall: rich
+    Found existing installation: rich 14.3.4
+    Uninstalling rich-14.3.4:
+      Successfully uninstalled rich-14.3.4
+  WARNING: The script deepseek.exe is installed in 'C:\Users\laido\AppData\Roaming\Python\Python312\Scripts' which is not on PATH.
+  Consider adding this directory to PATH or, if you prefer to suppress this warning, use --no-warn-script-location.
+ERROR: pip's dependency resolver does not currently take into account all the packages that are installed. This behaviour is the source of the following dependency conflicts.
+deepagents-cli 0.0.34 requires rich<15.0.0,>=14.0.0, but you have rich 13.9.4 which is incompatible.
+textual 8.2.3 requires rich>=14.2.0, but you have rich 13.9.4 which is incompatible.
+deep-research-example 0.1.0 requires rich>=14.0.0, but you have rich 13.9.4 which is incompatible.
+Successfully installed deepseek-tui-0.1.0 rich-13.9.4
+
+[notice] A new release of pip is available: 24.2 -> 26.1
+[notice] To update, run: python.exe -m pip install --upgrade pip
