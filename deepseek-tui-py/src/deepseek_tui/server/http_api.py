@@ -133,26 +133,80 @@ def create_app(
                 yield {"event": "error", "data": json.dumps({"message": "No API key configured"})}
                 return
 
-            from ..llm import MessageRequest, Message, ContentBlock
-
-            messages = [Message(role="user", content=[ContentBlock(type="text", text=payload.prompt)])]
-            req = MessageRequest(
-                model=payload.model or state.config.model,
-                messages=messages,
-                stream=True,
+            queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
+            thread = (
+                state.runtime.thread_manager.get(payload.thread_id)
+                if payload.thread_id
+                else None
             )
 
-            try:
-                async for event in state.runtime.llm_client.create_message_stream(req):
-                    if event.type == "content_block_delta" and event.delta:
-                        if event.delta.text:
-                            yield {"event": "text", "data": json.dumps({"text": event.delta.text})}
-                        elif event.delta.thinking:
-                            yield {"event": "thinking", "data": json.dumps({"thinking": event.delta.thinking})}
-            except Exception as e:
-                yield {"event": "error", "data": json.dumps({"message": str(e)})}
+            async def on_event(event):
+                await queue.put(("event", event))
 
-            yield {"event": "done", "data": "{}"}
+            async def run_turn():
+                try:
+                    result = await state.runtime.run_turn(
+                        payload.prompt,
+                        thread=thread,
+                        model=payload.model,
+                        event_callback=on_event,
+                    )
+                    await queue.put(("result", result))
+                except Exception as exc:
+                    await queue.put(("error", exc))
+
+            turn_task = asyncio.create_task(run_turn())
+
+            try:
+                while True:
+                    kind, item = await queue.get()
+                    if kind == "event":
+                        if item.event == "response_delta" and item.delta:
+                            yield {"event": "text", "data": json.dumps({"text": item.delta})}
+                        elif item.event == "thinking_delta" and item.delta:
+                            yield {
+                                "event": "thinking",
+                                "data": json.dumps({"thinking": item.delta}),
+                            }
+                        elif item.event == "tool_call":
+                            yield {
+                                "event": "tool_call",
+                                "data": json.dumps(
+                                    {
+                                        "tool_name": item.tool_name,
+                                        "arguments": item.arguments,
+                                        "output": item.output,
+                                    }
+                                ),
+                            }
+                        elif item.event == "tool_result":
+                            yield {
+                                "event": "tool_result",
+                                "data": json.dumps(
+                                    {
+                                        "tool_name": item.tool_name,
+                                        "output": item.output,
+                                    }
+                                ),
+                            }
+                        elif item.event == "error":
+                            yield {
+                                "event": "error",
+                                "data": json.dumps({"message": item.message or "runtime error"}),
+                            }
+                    elif kind == "result":
+                        yield {
+                            "event": "done",
+                            "data": json.dumps(
+                                {"output": item.output, "model": item.model}
+                            ),
+                        }
+                        break
+                    elif kind == "error":
+                        yield {"event": "error", "data": json.dumps({"message": str(item)})}
+                        break
+            finally:
+                await turn_task
 
         return EventSourceResponse(event_generator())
 

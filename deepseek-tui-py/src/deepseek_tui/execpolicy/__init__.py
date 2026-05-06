@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
 
+from ..config.model import RunMode
+
 
 class ExecApprovalRequirementKind(Enum):
     SKIP = "skip"
@@ -42,6 +44,7 @@ class ExecApprovalRequirement:
 class ExecPolicyContext:
     command: str
     cwd: str
+    tool: str = ""
     ask_for_approval: bool = True
     sandbox_mode: Optional[str] = None
 
@@ -59,13 +62,40 @@ class ExecPolicyDecision:
 
 class ExecPolicyEngine:
     """Simple policy engine for tool execution approval."""
+    READ_ONLY_TOOLS = {"read_file", "grep", "glob", "list_dir", "search", "web_fetch"}
 
     def __init__(self, allowed_prefixes: Optional[list[str]] = None,
                  denied_prefixes: Optional[list[str]] = None) -> None:
         self._allowed = allowed_prefixes or []
         self._denied = denied_prefixes or ["rm -rf", "sudo", "> /dev/sda", "mkfs", "dd if="]
 
-    def check(self, context: ExecPolicyContext) -> ExecPolicyDecision:
+    def check(self, context: ExecPolicyContext, mode: RunMode = RunMode.AGENT) -> ExecPolicyDecision:
+        # YOLO mode: always skip (auto-approve)
+        if mode == RunMode.YOLO:
+            return ExecPolicyDecision(
+                allow=True,
+                requires_approval=False,
+                requirement=ExecApprovalRequirement.skip("YOLO mode - auto-approved"),
+            )
+
+        # Plan mode: only allow read-only tools
+        if mode == RunMode.PLAN:
+            tool = context.tool
+            if tool in self.READ_ONLY_TOOLS:
+                return ExecPolicyDecision(
+                    allow=True,
+                    requires_approval=False,
+                    requirement=ExecApprovalRequirement.skip("Plan mode read-only"),
+                )
+            return ExecPolicyDecision(
+                allow=False,
+                requires_approval=False,
+                requirement=ExecApprovalRequirement.forbidden(
+                    f"Plan mode: write tool '{tool}' is not allowed"
+                ),
+            )
+
+        # Agent mode: use normal approval rules (original logic)
         command = context.command.strip()
 
         # Check denied prefixes

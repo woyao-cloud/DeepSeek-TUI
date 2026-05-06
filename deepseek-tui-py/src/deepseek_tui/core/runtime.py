@@ -10,10 +10,11 @@ import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, AsyncIterator, Optional
+from typing import Any, Awaitable, Callable, Optional
 
 from deepseek_tui.agent import ModelRegistry, ModelResolution
 from deepseek_tui.config import ProviderKind, ResolvedRuntimeOptions
+from deepseek_tui.config.model import RunMode
 from deepseek_tui.execpolicy import ExecPolicyEngine, ExecPolicyContext
 from deepseek_tui.hooks import HookDispatcher
 from deepseek_tui.llm import (
@@ -207,6 +208,14 @@ class ThreadManager:
 
 # ── Runtime ───────────────────────────────────────────────────────────
 
+@dataclass
+class ToolUseState:
+    id: str
+    name: str
+    input: Any = field(default_factory=dict)
+    input_buffer: str = ""
+
+
 class Runtime:
     """Top-level runtime orchestrating threads, tools, LLM, and jobs."""
 
@@ -238,6 +247,13 @@ class Runtime:
                 model=config.model,
             )
 
+        # Runtime mode (defaults to AGENT)
+        self.mode = RunMode.AGENT
+
+    def set_mode(self, mode: RunMode) -> None:
+        """Switch runtime mode."""
+        self.mode = mode
+
     def _tool_context(self, thread: Optional[Thread] = None) -> ToolContext:
         return ToolContext(params=ToolParams(
             workspace=(thread.cwd if thread else Path.cwd()),
@@ -245,6 +261,284 @@ class Runtime:
             shell_allowed=True,
             network_allowed=True,
         ))
+
+    def _messages_for_thread(self, thread_id: str) -> list[Message]:
+        messages: list[Message] = []
+        for record in self.thread_manager.store.list_messages(thread_id):
+            if isinstance(record.item, dict):
+                try:
+                    messages.append(Message.model_validate(record.item))
+                    continue
+                except Exception:
+                    pass
+            messages.append(
+                Message(
+                    role=record.role,
+                    content=[ContentBlock(type="text", text=record.content)],
+                )
+            )
+        return messages
+
+    def _append_message(self, thread_id: str, message: Message) -> None:
+        text = self._message_text(message)
+        self.thread_manager.store.append_message(
+            thread_id,
+            message.role,
+            text,
+            message.model_dump(mode="json"),
+        )
+
+    @staticmethod
+    def _message_text(message: Message) -> str:
+        parts: list[str] = []
+        for block in message.content:
+            if block.type == "text" and block.text:
+                parts.append(block.text)
+            elif block.type == "thinking" and block.thinking:
+                parts.append(block.thinking)
+            elif block.type == "tool_use":
+                parts.append(f"[tool_use:{block.name}]")
+            elif block.type == "tool_result" and block.content:
+                parts.append(block.content)
+        return "\n".join(parts)
+
+    @staticmethod
+    def _response_text(response: MessageResponse) -> str:
+        return "\n".join(
+            block.text or ""
+            for block in response.content
+            if block.type == "text" and block.text
+        )
+
+    @staticmethod
+    def _tool_uses(response: MessageResponse) -> list[ContentBlock]:
+        return [block for block in response.content if block.type == "tool_use"]
+
+    async def _emit_event(
+        self,
+        event: EventFrame,
+        events: list[EventFrame],
+        event_callback: Optional[Callable[[EventFrame], Awaitable[None] | None]],
+    ) -> None:
+        events.append(event)
+        if event_callback is None:
+            return
+        maybe_awaitable = event_callback(event)
+        if maybe_awaitable is not None:
+            await maybe_awaitable
+
+    @staticmethod
+    def _finalize_tool_state(tool_state: ToolUseState) -> dict[str, Any]:
+        if tool_state.input_buffer.strip():
+            try:
+                parsed = json.loads(tool_state.input_buffer)
+            except json.JSONDecodeError:
+                parsed = tool_state.input
+            if isinstance(parsed, dict):
+                tool_state.input = parsed
+        if isinstance(tool_state.input, dict):
+            return tool_state.input
+        return {}
+
+    @staticmethod
+    def _assistant_message_from_stream(
+        text: str,
+        thinking: str,
+        tool_uses: list[ToolUseState],
+    ) -> Message:
+        blocks: list[ContentBlock] = []
+        if thinking:
+            blocks.append(ContentBlock(type="thinking", thinking=thinking))
+        elif tool_uses:
+            blocks.append(ContentBlock(type="thinking", thinking="(reasoning omitted)"))
+        if text:
+            blocks.append(ContentBlock(type="text", text=text))
+        for tool_use in tool_uses:
+            blocks.append(
+                ContentBlock(
+                    type="tool_use",
+                    id=tool_use.id,
+                    name=tool_use.name,
+                    input=tool_use.input,
+                )
+            )
+        return Message(role="assistant", content=blocks)
+
+    async def _stream_model_round(
+        self,
+        request: MessageRequest,
+        events: list[EventFrame],
+        event_callback: Optional[Callable[[EventFrame], Awaitable[None] | None]],
+    ) -> tuple[Message, list[ToolUseState], str]:
+        current_text = ""
+        current_thinking = ""
+        tool_uses: list[ToolUseState] = []
+        tool_indices: dict[int, int] = {}
+
+        async for event in self.llm_client.create_message_stream(request):
+            if event.type == "content_block_start" and event.content_block:
+                if event.content_block.type == "tool_use":
+                    block_index = event.index if event.index is not None else 0
+                    tool_indices[block_index] = len(tool_uses)
+                    tool_uses.append(
+                        ToolUseState(
+                            id=event.content_block.id or f"call_{len(tool_uses)}",
+                            name=event.content_block.name or "",
+                            input=event.content_block.input
+                            if isinstance(event.content_block.input, dict)
+                            else {},
+                        )
+                    )
+                continue
+
+            if event.type == "content_block_delta" and event.delta:
+                if event.delta.type == "text_delta" and event.delta.text:
+                    current_text += event.delta.text
+                    await self._emit_event(
+                        EventFrame(event="response_delta", delta=event.delta.text),
+                        events,
+                        event_callback,
+                    )
+                elif event.delta.type == "thinking_delta" and event.delta.thinking:
+                    current_thinking += event.delta.thinking
+                    await self._emit_event(
+                        EventFrame(event="thinking_delta", delta=event.delta.thinking),
+                        events,
+                        event_callback,
+                    )
+                elif event.delta.type == "input_json_delta" and event.delta.partial_json:
+                    block_index = event.index if event.index is not None else -1
+                    tool_index = tool_indices.get(block_index)
+                    if tool_index is not None:
+                        tool_uses[tool_index].input_buffer += event.delta.partial_json
+                        self._finalize_tool_state(tool_uses[tool_index])
+                continue
+
+            if event.type == "content_block_stop":
+                block_index = event.index if event.index is not None else -1
+                tool_index = tool_indices.get(block_index)
+                if tool_index is not None:
+                    tool_state = tool_uses[tool_index]
+                    arguments = self._finalize_tool_state(tool_state)
+                    await self._emit_event(
+                        EventFrame(
+                            event="tool_call",
+                            tool_name=tool_state.name,
+                            arguments=arguments,
+                            output={"tool_use_id": tool_state.id},
+                        ),
+                        events,
+                        event_callback,
+                    )
+                continue
+
+            if event.type == "message_stop":
+                break
+
+        assistant_message = self._assistant_message_from_stream(
+            current_text,
+            current_thinking,
+            tool_uses,
+        )
+        return assistant_message, tool_uses, current_text
+
+    async def run_turn(
+        self,
+        prompt: str,
+        thread: Optional[Thread] = None,
+        model: Optional[str] = None,
+        max_tool_rounds: int = 8,
+        event_callback: Optional[Callable[[EventFrame], Awaitable[None] | None]] = None,
+    ) -> PromptResponse:
+        """Run one user turn through the model/tool loop until final text."""
+        if self.llm_client is None:
+            return PromptResponse(
+                output="No API key configured",
+                model="unknown",
+                events=[EventFrame(event="error", message="No API key")],
+            )
+
+        if thread is None:
+            thread = self.thread_manager.spawn(
+                model_provider=self.config.provider.value,
+                cwd=Path.cwd(),
+                source=SessionSource.API,
+            )
+
+        resolution = self.model_registry.resolve(model or self.config.model, self.config.provider)
+        user_message = Message(
+            role="user",
+            content=[ContentBlock(type="text", text=prompt)],
+        )
+        self._append_message(thread.id, user_message)
+
+        events: list[EventFrame] = []
+        final_output = ""
+
+        for _round in range(max_tool_rounds + 1):
+            messages = self._messages_for_thread(thread.id)
+            request = MessageRequest(
+                model=resolution.resolved.id,
+                messages=messages,
+                tools=self.tool_registry.to_api_tools() or None,
+                stream=True,
+            )
+            assistant_message, tool_uses, round_output = await self._stream_model_round(
+                request,
+                events,
+                event_callback,
+            )
+            self._append_message(thread.id, assistant_message)
+
+            if not tool_uses:
+                final_output = round_output
+                break
+
+            for tool_use in tool_uses:
+                tool_name = tool_use.name
+                tool_input = tool_use.input if isinstance(tool_use.input, dict) else {}
+                result = await self.execute_tool(tool_name, tool_input, thread)
+                tool_result = Message(
+                    role="user",
+                    content=[
+                        ContentBlock(
+                            type="tool_result",
+                            tool_use_id=tool_use.id,
+                            content=result,
+                            is_error=result.startswith("Error:")
+                            or result.startswith("Blocked")
+                            or result.startswith("Requires approval"),
+                        )
+                    ],
+                )
+                self._append_message(thread.id, tool_result)
+                await self._emit_event(
+                    EventFrame(
+                        event="tool_result",
+                        tool_name=tool_name,
+                        output={"tool_use_id": tool_use.id, "result": result},
+                    ),
+                    events,
+                    event_callback,
+                )
+        else:
+            final_output = "Stopped: maximum tool rounds reached"
+            await self._emit_event(
+                EventFrame(event="error", message=final_output),
+                events,
+                event_callback,
+            )
+
+        await self._emit_event(
+            EventFrame(event="response_end"),
+            events,
+            event_callback,
+        )
+        return PromptResponse(
+            output=final_output,
+            model=resolution.resolved.id,
+            events=events,
+        )
 
     async def handle_thread(self, req: ThreadRequest) -> ThreadResponse:
         kind = req.kind
@@ -277,45 +571,8 @@ class Runtime:
 
     async def handle_prompt(self, req: PromptRequest) -> PromptResponse:
         """Handle a prompt request (non-streaming response)."""
-        if self.llm_client is None:
-            return PromptResponse(
-                output="No API key configured",
-                model="unknown",
-                events=[EventFrame(event="error", message="No API key")],
-            )
-
-        # Resolve model
-        resolution = self.model_registry.resolve(
-            req.model or self.config.model,
-            self.config.provider,
-        )
-
-        # Build messages
-        messages = [
-            Message(role="user", content=[ContentBlock(type="text", text=req.prompt)])
-        ]
-
-        # Attach tools
-        tools = self.tool_registry.to_api_tools()
-
-        llm_req = MessageRequest(
-            model=resolution.resolved.id,
-            messages=messages,
-            tools=tools if tools else None,
-            stream=True,
-        )
-
-        full_text = ""
-        async for event in self.llm_client.create_message_stream(llm_req):
-            if event.type == "content_block_delta" and event.delta:
-                if event.delta.text:
-                    full_text += event.delta.text
-
-        return PromptResponse(
-            output=full_text,
-            model=resolution.resolved.id,
-            events=[EventFrame(event="response_end")],
-        )
+        thread = self.thread_manager.get(req.thread_id) if req.thread_id else None
+        return await self.run_turn(req.prompt, thread=thread, model=req.model)
 
     async def execute_tool(
         self, tool_name: str, arguments: dict[str, Any],
@@ -323,6 +580,28 @@ class Runtime:
     ) -> str:
         """Execute a tool by name with arguments."""
         ctx = self._tool_context(thread)
+
+        # Check execution policy with current mode
+        policy_ctx = ExecPolicyContext(
+            command=tool_name,
+            cwd=str(ctx.params.cwd),
+            tool=tool_name,
+            ask_for_approval=bool(self.config.approval_policy),
+        )
+        decision = self.exec_policy.check(policy_ctx, self.mode)
+
+        if not decision.allow:
+            return f"Blocked by policy: {decision.reason or 'operation not allowed'}"
+
+        if decision.requires_approval:
+            # In AGENT mode, tools requiring approval are blocked until user approves
+            # In PLAN mode, all tools are blocked
+            if self.mode == RunMode.PLAN:
+                return f"Blocked: PLAN mode does not allow tool execution"
+            # In AGENT mode, we'd normally wait for user approval
+            # For now, block tools that require approval
+            return f"Requires approval: {decision.reason() or tool_name}"
+
         try:
             result = await self.tool_registry.execute(tool_name, arguments, ctx)
             return result

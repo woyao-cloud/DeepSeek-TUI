@@ -123,6 +123,12 @@ class MessageResponse(BaseModel):
 
 # ── Streaming Events ──────────────────────────────────────────────────
 
+class MessageDelta(BaseModel):
+    """Message-level metadata emitted near the end of a streamed turn."""
+    stop_reason: Optional[str] = None
+    stop_sequence: Optional[str] = None
+
+
 class StreamEvent(BaseModel):
     """Streaming event types for SSE responses."""
     type: str  # "message_start", "content_block_start", etc.
@@ -130,6 +136,9 @@ class StreamEvent(BaseModel):
     index: Optional[int] = None
     content_block: Optional[ContentBlock] = None
     delta: Optional[Delta] = None
+    message_delta: Optional[MessageDelta] = None
+    stop_reason: Optional[str] = None
+    stop_sequence: Optional[str] = None
     usage: Optional[Usage] = None
 
 

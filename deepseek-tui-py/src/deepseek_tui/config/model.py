@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 import os
-from collections import OrderedDict
 from dataclasses import dataclass, field
 from enum import Enum
-from pathlib import Path
 from typing import Optional
 
 
@@ -40,6 +38,12 @@ class ProviderKind(Enum):
 
     def provider_slot(self) -> str:
         return self.value
+
+
+class RunMode(str, Enum):
+    PLAN = "plan"      # Read-only mode
+    AGENT = "agent"    # Interactive approval mode (default)
+    YOLO = "yolo"      # Auto-approve mode
 
 
 # ── Provider Config ──────────────────────────────────────────────────
@@ -121,6 +125,7 @@ class ConfigToml:
     telemetry: Optional[bool] = None
     approval_policy: Optional[str] = None
     sandbox_mode: Optional[str] = None
+    default_mode: RunMode = RunMode.AGENT
     # Sub-tables
     providers: dict[ProviderKind, ProviderConfig] = field(default_factory=_default_providers)
     network: Optional[NetworkPolicyToml] = None
@@ -233,6 +238,7 @@ class ConfigToml:
             "log_level": self.log_level,
             "approval_policy": self.approval_policy,
             "sandbox_mode": self.sandbox_mode,
+            "default_mode": self.default_mode.value,
         }
         # Provider-specific keys
         for prov in ProviderKind:
@@ -284,6 +290,7 @@ class ConfigToml:
             result["approval_policy"] = self.approval_policy
         if self.sandbox_mode is not None:
             result["sandbox_mode"] = self.sandbox_mode
+        result["default_mode"] = self.default_mode.value
         # Provider-specific
         for prov in ProviderKind:
             prefix = f"providers.{prov.value}"
@@ -331,6 +338,12 @@ class ConfigToml:
             self.approval_policy = value
         elif key == "sandbox_mode":
             self.sandbox_mode = value
+        elif key == "default_mode":
+            try:
+                self.default_mode = RunMode(value.lower())
+            except ValueError:
+                valid_modes = [m.value for m in RunMode]
+                raise ValueError(f"invalid mode '{value}'. valid: {valid_modes}")
         elif key.startswith("providers."):
             parts = key.split(".")
             if len(parts) == 3:

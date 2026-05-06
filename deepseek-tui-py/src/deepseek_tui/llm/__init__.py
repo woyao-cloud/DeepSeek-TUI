@@ -13,6 +13,7 @@ from .models import (
     Tool,
     Usage,
     StreamEvent,
+    MessageDelta,
     Delta,
 )
 from .client import LlmClient, DeepSeekClient
@@ -28,6 +29,7 @@ __all__ = [
     "Tool",
     "Usage",
     "StreamEvent",
+    "MessageDelta",
     "Delta",
     "LlmClient",
     "DeepSeekClient",

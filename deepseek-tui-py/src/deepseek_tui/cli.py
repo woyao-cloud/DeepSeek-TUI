@@ -229,69 +229,58 @@ def launch_tui(resolved) -> None:
     from .core import Runtime
     from .agent import ModelRegistry
     from .state import StateStore
-    from .tools import ToolRegistry
+    from .tools import build_default_tool_registry
 
     store = StateStore()
     registry = ModelRegistry()
-    tools = ToolRegistry()
+    tools = build_default_tool_registry()
 
     runtime = Runtime(resolved, registry, store, tools) if resolved.api_key else None
-    app = DeepSeekApp(runtime=runtime)
+    app = DeepSeekApp(runtime=runtime, tool_registry=tools)
     app.run()
 
 
 async def run_one_shot(resolved, prompt: str, auto: bool = False) -> None:
-    from .llm import DeepSeekClient, MessageRequest, Message, LlmError
+    from .agent import ModelRegistry
+    from .core import Runtime
+    from .protocol import PromptRequest
+    from .state import StateStore
+    from .tools import build_default_tool_registry
 
     if not resolved.api_key:
         print("No API key configured. Use `deepseek login` or set DEEPSEEK_API_KEY.", file=sys.stderr)
         sys.exit(1)
 
-    # Quick connectivity check via a non-streaming health request
     print(f"Connecting to {resolved.base_url} ...", file=sys.stderr, end=" ", flush=True)
 
-    client = DeepSeekClient(
-        api_key=resolved.api_key,
-        base_url=resolved.base_url,
-        model=resolved.model,
-        timeout=30.0,
-    )
-
-    # First test: non-streaming call to verify API connectivity
-    test_req = MessageRequest(
-        model=resolved.model,
-        messages=[Message(role="user", content=[{"type": "text", "text": prompt}])],
-        max_tokens=64,
-        stream=False,
+    runtime = Runtime(
+        resolved,
+        ModelRegistry(),
+        StateStore(),
+        build_default_tool_registry(),
     )
     try:
-        resp = await asyncio.wait_for(client.create_message(test_req), timeout=30.0)
-        # If non-streaming works, show full response
-        for block in resp.content:
-            text = getattr(block, "text", None) or (block.get("text") if isinstance(block, dict) else None)
-            btype = getattr(block, "type", None) or (block.get("type") if isinstance(block, dict) else None)
-            if btype == "text" and text:
-                print(text)
+        resp = await asyncio.wait_for(
+            runtime.handle_prompt(PromptRequest(prompt=prompt, model=resolved.model)),
+            timeout=120.0,
+        )
+        print(resp.output)
         print(file=sys.stderr)
         return
     except asyncio.TimeoutError:
         print(file=sys.stderr)
-        print("Timeout: API server did not respond within 15s.", file=sys.stderr)
+        print("Timeout: API server did not respond within 120s.", file=sys.stderr)
         print(f"Check: 1) Network connectivity  2) API key validity  3) Base URL: {resolved.base_url}", file=sys.stderr)
-        sys.exit(1)
-    except LlmError as e:
-        print(file=sys.stderr)
-        print(f"API Error: {e}", file=sys.stderr)
-        if "authentication" in str(e).lower() or "401" in str(e):
-            print("Hint: Run `deepseek login --api-key sk-...` to set a valid key.", file=sys.stderr)
         sys.exit(1)
     except Exception as e:
         print(file=sys.stderr)
         print(f"Connection failed: {e}", file=sys.stderr)
-        print(f"Check base URL or network: {resolved.base_url}", file=sys.stderr)
+        if "authentication" in str(e).lower() or "401" in str(e):
+            print("Hint: Run `deepseek login --api-key sk-...` to set a valid key.", file=sys.stderr)
         sys.exit(1)
     finally:
-        await client.close()
+        if runtime.llm_client and hasattr(runtime.llm_client, "close"):
+            await runtime.llm_client.close()
 
 
 if __name__ == "__main__":

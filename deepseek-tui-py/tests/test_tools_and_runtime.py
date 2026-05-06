@@ -333,3 +333,118 @@ class TestRuntime:
             # Read it back
             result = await rt.execute_tool("read_file", {"path": "test.txt"})
             assert "hello runtime" in result
+
+    async def test_run_turn_executes_tool_and_continues(self):
+        from deepseek_tui.agent import ModelRegistry
+        from deepseek_tui.config import ProviderKind, ResolvedRuntimeOptions
+        from deepseek_tui.core import Runtime
+        from deepseek_tui.llm import ContentBlock, Delta, MessageDelta, MessageResponse, StreamEvent
+        from deepseek_tui.state import StateStore
+        from deepseek_tui.tools import ToolRegistry
+        from deepseek_tui.tools.file_tools import ReadFileTool, WriteFileTool
+
+        class FakeClient:
+            provider_name = "fake"
+            model = "deepseek-v4-pro"
+
+            def __init__(self):
+                self.requests = []
+
+            async def create_message(self, request):
+                raise AssertionError("run_turn should use streaming client path")
+
+            async def create_message_stream(self, request):
+                self.requests.append(request)
+                saw_tool_result = any(
+                    block.type == "tool_result"
+                    for message in request.messages
+                    for block in message.content
+                )
+                if not saw_tool_result:
+                    yield StreamEvent(
+                        type="content_block_start",
+                        index=0,
+                        content_block=ContentBlock(
+                            type="tool_use",
+                            id="call-1",
+                            name="write_file",
+                            input={},
+                        ),
+                    )
+                    yield StreamEvent(
+                        type="content_block_delta",
+                        index=0,
+                        delta=Delta(
+                            type="input_json_delta",
+                            partial_json='{"path":"turn.txt","content":"from tool loop"}',
+                        ),
+                    )
+                    yield StreamEvent(type="content_block_stop", index=0)
+                    yield StreamEvent(
+                        type="message_delta",
+                        message_delta=MessageDelta(stop_reason="tool_calls"),
+                    )
+                    yield StreamEvent(type="message_stop")
+                    return
+
+                yield StreamEvent(
+                    type="content_block_start",
+                    index=0,
+                    content_block=ContentBlock(type="text", text=""),
+                )
+                yield StreamEvent(
+                    type="content_block_delta",
+                    index=0,
+                    delta=Delta(type="text_delta", text="done"),
+                )
+                yield StreamEvent(type="content_block_stop", index=0)
+                yield StreamEvent(
+                    type="message_delta",
+                    message_delta=MessageDelta(stop_reason="end_turn"),
+                )
+                yield StreamEvent(type="message_stop")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config = ResolvedRuntimeOptions(
+                provider=ProviderKind.DEEPSEEK,
+                model="deepseek-v4-pro",
+                api_key=None,
+                base_url="https://api.deepseek.com",
+                output_mode=None,
+                log_level=None,
+                telemetry=False,
+                auth_mode=None,
+                approval_policy=None,
+                sandbox_mode=None,
+            )
+            tools = ToolRegistry()
+            tools.register(WriteFileTool())
+            tools.register(ReadFileTool())
+            rt = Runtime(config, ModelRegistry(), StateStore(Path(tmp) / "state.db"), tools)
+            fake = FakeClient()
+            rt.llm_client = fake
+            thread = rt.thread_manager.spawn(cwd=Path(tmp))
+            seen_events = []
+
+            async def on_event(event):
+                seen_events.append(event.event)
+
+            response = await rt.run_turn(
+                "write a file",
+                thread=thread,
+                event_callback=on_event,
+            )
+
+            assert response.output == "done"
+            assert (Path(tmp) / "turn.txt").read_text() == "from tool loop"
+            assert len(fake.requests) == 2
+            assert "tool_call" in seen_events
+            assert "response_delta" in seen_events
+            assert seen_events[-1] == "response_end"
+            assert any(event.event == "tool_result" for event in response.events)
+            assert any(
+                block.type == "thinking"
+                for message in fake.requests[1].messages
+                if message.role == "assistant"
+                for block in message.content
+            )

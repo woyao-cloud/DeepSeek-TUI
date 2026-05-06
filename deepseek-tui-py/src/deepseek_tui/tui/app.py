@@ -18,14 +18,7 @@ from textual.screen import Screen
 from textual.widgets import Header, Footer, Static
 
 from ..core import Runtime
-from ..tools import ToolRegistry
-from ..tools.file_tools import ReadFileTool, WriteFileTool, EditFileTool, ListDirTool
-from ..tools.shell_tools import ExecShellTool, NoteTool
-from ..tools.search_git_tools import GrepFilesTool, FileSearchTool
-from ..tools.todo_plan_tools import (
-    TodoWriteTool, TodoListTool, UpdatePlanTool, DiagnosticsTool,
-)
-from ..tools.web_validation_tools import ValidateDataTool
+from ..tools import ToolRegistry, build_default_tool_registry
 
 from .state import UiState, Pane
 
@@ -147,21 +140,7 @@ class DeepSeekApp(App):
     @staticmethod
     def _build_default_tools() -> ToolRegistry:
         """Build a default tool registry for the TUI session."""
-        r = ToolRegistry()
-        r.register(ReadFileTool())
-        r.register(WriteFileTool())
-        r.register(EditFileTool())
-        r.register(ListDirTool())
-        r.register(ExecShellTool())
-        r.register(NoteTool())
-        r.register(GrepFilesTool())
-        r.register(FileSearchTool())
-        r.register(TodoWriteTool())
-        r.register(TodoListTool())
-        r.register(UpdatePlanTool())
-        r.register(DiagnosticsTool())
-        r.register(ValidateDataTool())
-        return r
+        return build_default_tool_registry()
 
     def compose(self) -> ComposeResult:
         from .screens.chat import ChatScreen
@@ -216,45 +195,45 @@ class DeepSeekApp(App):
 
         self.ui_state.status_line = "streaming..."
         screen.add_message("user", prompt)
-        thinking_msg = screen.add_message("assistant", "", thinking=True)
+        assistant_msg = screen.add_message("assistant", "", thinking=True)
 
         if self.runtime and self.runtime.llm_client:
-            from ..llm import MessageRequest, Message
-            from ..protocol import ContentBlock as ProtocolBlock
-
-            messages = [
-                Message(role="user", content=[ProtocolBlock(type="text", text=prompt)])
-            ]
-            tools = self._tool_registry.to_api_tools()
-
-            req = MessageRequest(
-                model=self.runtime.config.model,
-                messages=messages,
-                tools=tools if tools else None,
-                stream=True,
-            )
-
-            text_accum = ""
             try:
-                async for event in self.runtime.llm_client.create_message_stream(req):
-                    if event.type == "content_block_delta" and event.delta:
-                        if event.delta.text:
-                            text_accum += event.delta.text
-                            screen.update_message(thinking_msg, text_accum)
-                        elif event.delta.thinking:
-                            screen.update_thinking(thinking_msg, event.delta.thinking)
-                    elif event.type == "content_block_stop":
-                        pass
-            except Exception as e:
-                screen.update_message(thinking_msg, f"Error: {e}")
-                self.ui_state.status_line = "error"
+                text_accum = ""
+                thinking_accum = ""
 
-            if text_accum:
-                screen.finalize_message(thinking_msg, text_accum)
-                self.ui_state.status_line = "ready"
+                async def on_event(event) -> None:
+                    nonlocal text_accum, thinking_accum
+
+                    if event.event == "thinking_delta" and event.delta:
+                        thinking_accum += event.delta
+                        screen.update_thinking(assistant_msg, thinking_accum)
+                        self.ui_state.status_line = "thinking..."
+                    elif event.event == "response_delta" and event.delta:
+                        if thinking_accum:
+                            thinking_accum = ""
+                            screen.update_thinking(assistant_msg, "")
+                        text_accum += event.delta
+                        screen.update_message(assistant_msg, text_accum)
+                        self.ui_state.status_line = "streaming..."
+                    elif event.event == "tool_call":
+                        self.ui_state.status_line = f"tool: {event.tool_name}"
+                    elif event.event == "tool_result":
+                        self.ui_state.status_line = "tool complete"
+
+                response = await self.runtime.run_turn(prompt, event_callback=on_event)
+            except Exception as e:
+                screen.update_message(assistant_msg, f"Error: {e}")
+                self.ui_state.status_line = "error"
+                return
+
+            final_text = response.output or text_accum
+            if final_text:
+                screen.finalize_message(assistant_msg, final_text)
+            self.ui_state.status_line = "ready"
         else:
             screen.update_message(
-                thinking_msg,
+                assistant_msg,
                 "No API key configured. Use `deepseek login` or set DEEPSEEK_API_KEY.",
             )
             self.ui_state.status_line = "no API key"

@@ -17,6 +17,7 @@ from .base import (
     optional_bool,
 )
 from .context import ToolContext, ToolParams
+from .defaults import build_default_tool_registry
 from .registry import ToolRegistry, ToolRegistryBuilder
 
 __all__ = [
@@ -30,6 +31,7 @@ __all__ = [
     "ToolParams",
     "ToolRegistry",
     "ToolRegistryBuilder",
+    "build_default_tool_registry",
     "required_str",
     "optional_str",
     "required_u64",
