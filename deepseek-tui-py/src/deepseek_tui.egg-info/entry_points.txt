@@ -1,0 +1,2 @@
+[console_scripts]
+deepseek = deepseek_tui.cli:main

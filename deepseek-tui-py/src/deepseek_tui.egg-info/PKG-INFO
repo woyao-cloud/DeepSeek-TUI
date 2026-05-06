@@ -1,0 +1,25 @@
+Metadata-Version: 2.4
+Name: deepseek-tui
+Version: 0.1.0
+Summary: DeepSeek TUI/CLI for DeepSeek models (Python port)
+Author-email: Hmbown <hmbown@users.noreply.github.com>
+Requires-Python: >=3.12
+Requires-Dist: httpx<1,>=0.28
+Requires-Dist: httpx-sse<1,>=0.4
+Requires-Dist: pydantic<3,>=2.10
+Requires-Dist: pydantic-settings<3,>=2.7
+Requires-Dist: aiosqlite<1,>=0.21
+Requires-Dist: pyyaml<7,>=6.0
+Requires-Dist: tomli<3,>=2.2; python_version < "3.11"
+Requires-Dist: rich<14,>=13.9
+Requires-Dist: typing-extensions<5,>=4.12
+Provides-Extra: tui
+Requires-Dist: textual<4,>=3.1; extra == "tui"
+Provides-Extra: server
+Requires-Dist: fastapi<1,>=0.115; extra == "server"
+Requires-Dist: uvicorn<1,>=0.34; extra == "server"
+Requires-Dist: sse-starlette<1,>=2.1; extra == "server"
+Provides-Extra: mcp
+Requires-Dist: mcp<2,>=1.3; extra == "mcp"
+Provides-Extra: all
+Requires-Dist: deepseek-tui[mcp,server,tui]; extra == "all"

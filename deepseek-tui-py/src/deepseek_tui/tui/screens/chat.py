@@ -145,36 +145,34 @@ class ChatScreen(Screen):
             app.stream_response(text)
 
     def handle_command(self, text: str) -> None:
-        cmd = text.split()[0].lower()
-        match cmd:
-            case "/help":
-                self._system_message("Commands: /help, /clear, /compact, /cost, /plan, /todo, /model")
-            case "/clear":
+        from ..commands import dispatch, CommandResult
+        from ..commands.all_commands import register_all
+        register_all()  # Ensure registered (idempotent)
+
+        result = dispatch(text)
+        if result.action:
+            app = self.app
+            action = result.action
+            if action == "clear":
                 self.clear_messages()
                 self._system_message("Conversation cleared.")
-            case "/compact":
-                self._system_message("Context compacted.")
-            case "/cost":
-                self._system_message("Cost tracking not yet implemented.")
-            case "/plan":
-                self._system_message("Current plan: nothing in progress.")
-            case "/todo":
-                from ...tools.todo_plan_tools import _global_todos
-                items = _global_todos.list()
-                if items:
-                    lines = [f"{i}. [{item.get('status','')}] {item.get('content','')}" for i, item in enumerate(items)]
-                    self._system_message("\n".join(lines))
-                else:
-                    self._system_message("No todo items.")
-            case "/model":
-                app = self.app
-                model = getattr(app.runtime, "config", None)
-                if model:
-                    self._system_message(f"Model: {model.model}")
-                else:
-                    self._system_message("Model: not configured")
-            case _:
-                self._system_message(f"Unknown command: {cmd}. Type /help.")
+            elif action == "quit":
+                app.exit()
+            elif action.startswith("toggle_"):
+                mode = action.replace("toggle_", "")
+                self._system_message(f"{mode} mode toggled.")
+            elif action == "show_system_prompt":
+                self._system_message("System prompt: (not implemented)")
+            elif action == "open_context_inspector":
+                self._system_message("Context inspector: not available in CLI mode.")
+            elif action == "logout":
+                self._system_message("Logged out.")
+            else:
+                self._system_message(f"Action: {action}")
+        elif result.message:
+            self._system_message(result.message)
+        elif result.is_error:
+            self._system_message(result.message or "Unknown error")
 
     def _system_message(self, text: str) -> None:
         msg = ChatMessage("system", text)

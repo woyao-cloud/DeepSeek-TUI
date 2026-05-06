@@ -7,9 +7,17 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import io
 import sys
 from pathlib import Path
 from typing import Optional
+
+# Windows GBK workaround: force UTF-8 on stdout/stderr so emoji and
+# non-ASCII characters from API responses don't crash on print().
+if sys.stdout and hasattr(sys.stdout, 'buffer'):
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+if sys.stderr and hasattr(sys.stderr, 'buffer'):
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
 from . import __version__
 from .config import ConfigStore, ConfigToml, ProviderConfig, ProviderKind, CliRuntimeOverrides
@@ -210,30 +218,55 @@ def handle_logout(store: ConfigStore) -> None:
 
 
 async def run_one_shot(resolved, prompt: str, auto: bool = False) -> None:
-    from .llm import DeepSeekClient, MessageRequest, Message
+    from .llm import DeepSeekClient, MessageRequest, Message, LlmError
 
     if not resolved.api_key:
         print("No API key configured. Use `deepseek login` or set DEEPSEEK_API_KEY.", file=sys.stderr)
         sys.exit(1)
 
+    # Quick connectivity check via a non-streaming health request
+    print(f"Connecting to {resolved.base_url} ...", file=sys.stderr, end=" ", flush=True)
+
     client = DeepSeekClient(
         api_key=resolved.api_key,
         base_url=resolved.base_url,
         model=resolved.model,
+        timeout=30.0,
     )
-    req = MessageRequest(
+
+    # First test: non-streaming call to verify API connectivity
+    test_req = MessageRequest(
         model=resolved.model,
         messages=[Message(role="user", content=[{"type": "text", "text": prompt}])],
-        stream=True,
+        max_tokens=64,
+        stream=False,
     )
     try:
-        async for event in client.create_message_stream(req):
-            if event.type == "content_block_delta" and event.delta:
-                if event.delta.text:
-                    print(event.delta.text, end="", flush=True)
-                elif event.delta.thinking:
-                    print(f"\n[thinking] {event.delta.thinking}[/thinking]", end="", flush=True)
-        print()
+        resp = await asyncio.wait_for(client.create_message(test_req), timeout=30.0)
+        # If non-streaming works, show full response
+        for block in resp.content:
+            text = getattr(block, "text", None) or (block.get("text") if isinstance(block, dict) else None)
+            btype = getattr(block, "type", None) or (block.get("type") if isinstance(block, dict) else None)
+            if btype == "text" and text:
+                print(text)
+        print(file=sys.stderr)
+        return
+    except asyncio.TimeoutError:
+        print(file=sys.stderr)
+        print("Timeout: API server did not respond within 15s.", file=sys.stderr)
+        print(f"Check: 1) Network connectivity  2) API key validity  3) Base URL: {resolved.base_url}", file=sys.stderr)
+        sys.exit(1)
+    except LlmError as e:
+        print(file=sys.stderr)
+        print(f"API Error: {e}", file=sys.stderr)
+        if "authentication" in str(e).lower() or "401" in str(e):
+            print("Hint: Run `deepseek login --api-key sk-...` to set a valid key.", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(file=sys.stderr)
+        print(f"Connection failed: {e}", file=sys.stderr)
+        print(f"Check base URL or network: {resolved.base_url}", file=sys.stderr)
+        sys.exit(1)
     finally:
         await client.close()
 
