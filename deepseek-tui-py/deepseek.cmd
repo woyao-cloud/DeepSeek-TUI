@@ -1,5 +1,4 @@
 @echo off
-chcp 65001 > nul
-cd /d "%~dp0"
+cd /d "%~dp0deepseek-tui-py"
 set PYTHONPATH=src
-python -m deepseek_tui.cli %*
+.venv\Scripts\python -m deepseek_tui.cli %*

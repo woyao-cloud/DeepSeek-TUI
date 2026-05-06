@@ -1,19 +1,13 @@
-"""Chat screen — main conversation view.
-
-Port of `crates/tui/src/tui/transcript.rs`, `streaming/`, `user_input.rs`.
-"""
+"""Chat screen — main conversation view."""
 
 from __future__ import annotations
 
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import Container, Vertical
-from textual.message import Message
-from textual.screen import Screen
-from textual.widgets import Static, TextArea, Label
+from textual.containers import Vertical
+from textual.widgets import Static, Input
 from rich.text import Text
 from rich.markdown import Markdown
-from typing import Optional
 
 
 class ChatMessage(Static):
@@ -32,31 +26,17 @@ class ChatMessage(Static):
         self._render()
 
     def _render(self) -> None:
-        classes = "message-block "
-        classes += "message-user" if self.message_role == "user" else "message-assistant"
-
-        renderables = []
-
-        # Thinking block
         if self._thinking_text and not self._finalized:
-            thinking_rich = Text(f"🧠 {self._thinking_text}", style="italic dim")
-            renderables.append(thinking_rich)
-
-        # Tool calls
-        for tc in self.tool_calls:
-            renderables.append(Text(f"🔧 {tc}", style="bold green"))
-
-        # Main content
-        if self._content:
+            self.update(Text(f"🧠 {self._thinking_text}", style="italic dim"))
+        elif self._content:
             if self.message_role == "user":
-                renderables.append(Text(self._content))
+                self.update(Text(self._content))
+            elif self._finalized:
+                self.update(Markdown(self._content))
             else:
-                renderables.append(Markdown(self._content))
-
-        if renderables:
-            self.update(renderables[0] if len(renderables) == 1 else Text("\n\n").join(
-                str(r) for r in renderables
-            ))
+                self.update(Text(self._content[:200] + ("…" if len(self._content) > 200 else "")))
+        else:
+            self.update("")
 
     def update_content(self, content: str) -> None:
         self._content = content
@@ -66,105 +46,82 @@ class ChatMessage(Static):
         self._thinking_text = thinking
         self._render()
 
-    def add_tool_call(self, name: str) -> None:
-        self.tool_calls.append(name)
-        self._render()
-
     def finalize(self, content: str) -> None:
         self._finalized = True
         self._thinking_text = ""
         self._content = content
-        classes = "message-block message-assistant"
         self.update(Markdown(content))
-        self.classes = classes
 
 
-class ChatContainer(Vertical):
-    """Scrollable container for chat messages."""
-    pass
-
-
-class DeepSeekInput(TextArea):
-    """Custom text area with slash command support."""
-
-    class Submitted(Message):
-        def __init__(self, text: str) -> None:
-            self.text = text
-            super().__init__()
-
-    BINDINGS = [
-        ("enter", "submit", "Submit"),
-        ("escape", "cancel", "Cancel"),
-    ]
+class DeepSeekInput(Input):
+    """Single-line input with Enter to submit."""
 
     def action_submit(self) -> None:
-        text = self.text.strip()
+        """Override Input.action_submit to clear value after posting."""
+        text = self.value.strip()
         if text:
-            self.post_message(self.Submitted(text))
-            self.text = ""
-
-    def action_cancel(self) -> None:
-        self.text = ""
+            self.post_message(Input.Submitted(self.value))
+            self.value = ""
 
 
-class ChatScreen(Screen):
-    """Main chat screen with message history and input."""
+class ChatScreen(Vertical):
+    """Main chat view with message history and input."""
 
-    BINDINGS = [
-        ("ctrl+l", "focus_input", "Focus Input"),
-    ]
+    DEFAULT_CSS = """
+    ChatScreen {
+        layout: vertical;
+        height: 1fr;
+        min-height: 5;
+    }
+    #chat-container {
+        height: 1fr;
+        overflow: auto;
+        border: solid $border;
+        padding: 0 1;
+    }
+    #input-area {
+        dock: bottom;
+        border-top: solid $primary;
+        background: $surface;
+    }
+    """
 
     def compose(self) -> ComposeResult:
-        with Container(id="main"):
-            self.chat_container = ChatContainer(id="chat-container")
-            yield self.chat_container
-            with Container(id="input-container"):
-                self.input_field = DeepSeekInput(
-                    id="input-area",
-                    placeholder="Type a message... (Ctrl+Enter to send)",
-                    max_length=10000,
-                    show_line_numbers=False,
-                )
-                yield self.input_field
+        self.chat_container = Vertical(id="chat-container")
+        yield self.chat_container
+        self.input_field = DeepSeekInput(
+            id="input-area",
+            placeholder="Type a message and press Enter to send",
+        )
+        yield self.input_field
 
     def on_mount(self) -> None:
         self.input_field.focus()
 
-    @on(DeepSeekInput.Submitted)
-    def handle_submit(self, event: DeepSeekInput.Submitted) -> None:
-        text = event.text
-
-        # Handle slash commands
+    @on(Input.Submitted)
+    def handle_submit(self, event: Input.Submitted) -> None:
+        text = event.value.strip()
+        if not text:
+            return
         if text.startswith("/"):
             self.handle_command(text)
             return
-
-        # Send to app for streaming
         app = self.app
         if hasattr(app, "stream_response"):
             app.stream_response(text)
 
     def handle_command(self, text: str) -> None:
-        from ..commands import dispatch, CommandResult
+        from ..commands import dispatch
         from ..commands.all_commands import register_all
-        register_all()  # Ensure registered (idempotent)
-
+        register_all()
         result = dispatch(text)
         if result.action:
-            app = self.app
             action = result.action
             if action == "clear":
                 self.clear_messages()
                 self._system_message("Conversation cleared.")
             elif action == "quit":
-                app.exit()
-            elif action.startswith("toggle_"):
-                mode = action.replace("toggle_", "")
-                self._system_message(f"{mode} mode toggled.")
-            elif action == "show_system_prompt":
-                self._system_message("System prompt: (not implemented)")
-            elif action == "open_context_inspector":
-                self._system_message("Context inspector: not available in CLI mode.")
+                self.app.exit()
             elif action == "logout":
                 self._system_message("Logged out.")
             else:
@@ -198,7 +155,4 @@ class ChatScreen(Screen):
         self.chat_container.remove_children()
 
     def focus_input(self) -> None:
-        self.input_field.focus()
-
-    def action_focus_input(self) -> None:
         self.input_field.focus()

@@ -42,39 +42,14 @@ class DeepSeekApp(App):
         width: 32;
         dock: left;
         background: $surface;
-        border: solid $primary;
+        border-right: solid $primary;
         overflow: auto;
+        height: 1fr;
     }
 
-    #main {
+    ChatScreen {
         width: 1fr;
         height: 1fr;
-    }
-
-    #chat-container {
-        height: 1fr;
-        overflow: auto;
-        border: solid $border;
-        padding: 0 1;
-    }
-
-    #input-container {
-        height: 3;
-        dock: bottom;
-        background: $surface;
-        border-top: solid $primary;
-    }
-
-    #input-area {
-        height: 3;
-    }
-
-    #status-bar {
-        dock: bottom;
-        height: 1;
-        background: $primary;
-        color: $text;
-        content-align: center middle;
     }
 
     .sidebar-panel {
@@ -191,7 +166,7 @@ class DeepSeekApp(App):
     def compose(self) -> ComposeResult:
         from .screens.chat import ChatScreen
         from .screens.sidebar import SidebarPanel
-        yield SidebarPanel()
+        yield SidebarPanel(id="sidebar")
         yield ChatScreen()
 
     def on_mount(self) -> None:

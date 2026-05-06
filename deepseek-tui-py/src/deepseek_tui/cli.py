@@ -83,6 +83,9 @@ def build_parser() -> argparse.ArgumentParser:
     # Sessions
     sub.add_parser("sessions", help="List saved sessions")
 
+    # TUI
+    sub.add_parser("tui", help="Launch the Textual terminal UI")
+
     return parser
 
 
@@ -115,6 +118,9 @@ def main() -> None:
             return
 
     match args.command:
+        case "tui":
+            launch_tui(resolved)
+            return
         case "serve":
             print("Server mode not yet implemented (use --http)")
         case "config":
@@ -215,6 +221,23 @@ def handle_logout(store: ConfigStore) -> None:
     store.config.providers.clear()
     store.save()
     print("logged out")
+
+
+def launch_tui(resolved) -> None:
+    """Launch the Textual terminal UI."""
+    from .tui import DeepSeekApp
+    from .core import Runtime
+    from .agent import ModelRegistry
+    from .state import StateStore
+    from .tools import ToolRegistry
+
+    store = StateStore()
+    registry = ModelRegistry()
+    tools = ToolRegistry()
+
+    runtime = Runtime(resolved, registry, store, tools) if resolved.api_key else None
+    app = DeepSeekApp(runtime=runtime)
+    app.run()
 
 
 async def run_one_shot(resolved, prompt: str, auto: bool = False) -> None:

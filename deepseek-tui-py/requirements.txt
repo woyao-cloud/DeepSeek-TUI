@@ -4,6 +4,6 @@ pydantic>=2.10,<3
 pydantic-settings>=2.7,<3
 aiosqlite>=0.21,<1
 tomli_w>=1.2,<2
-rich>=13.9,<14
+rich>=13.9,<16
 pytest>=8.0,<9
 pytest-asyncio>=0.25,<1
